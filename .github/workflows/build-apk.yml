@@ -5,6 +5,9 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -18,14 +21,31 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Accept Android SDK licenses
-        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
+      - name: Install Android SDK components
+        run: |
+          SDKMGR="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMGR" --licenses || true
+          "$SDKMGR" "platform-tools" "platforms;android-34" "build-tools;34.0.0" || true
 
       - name: Generate Gradle wrapper
         run: gradle wrapper --gradle-version 8.9
 
       - name: Build debug APK
-        run: ./gradlew assembleDebug --no-daemon --stacktrace
+        run: |
+          set -o pipefail
+          ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee /tmp/build.log
+
+      - name: Capture build log on failure
+        if: failure()
+        run: |
+          mkdir -p cilogs
+          cp /tmp/build.log cilogs/build.log 2>/dev/null || echo "no build.log produced" > cilogs/build.log
+          git config user.name "ci"
+          git config user.email "ci@local"
+          git checkout -B ci-logs
+          git add -f cilogs/build.log
+          git commit -m "ci build log" || true
+          git push -f origin ci-logs || true
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
